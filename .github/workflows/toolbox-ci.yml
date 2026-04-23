@@ -1,0 +1,78 @@
+name: Toolbox Sanity Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Linters
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      # 1. Structural & Executable Check
+      - name: Validate Structure and Permissions
+        run: |
+          FAIL=0
+          # Find all files exactly 2 levels deep (e.g., ./search/yaml-search)
+          # We skip the .git and .github directories
+          for filepath in $(find . -mindepth 2 -maxdepth 2 -not -path '*/.*' -type f); do
+            FILENAME=$(basename "$filepath")
+            DIRNAME=$(basename "$(dirname "$filepath")")
+
+            # Check if filename matches directory name
+            if [ "$FILENAME" != "$DIRNAME" ]; then
+              echo "Error: File '$filepath' does not match parent directory '$DIRNAME'."
+              FAIL=1
+            fi
+
+            # Check if file is executable
+            if [ ! -x "$filepath" ]; then
+              echo "Error: File '$filepath' is not marked as executable."
+              FAIL=1
+            fi
+          done
+
+          if [ $FAIL -ne 0 ]; then
+            echo "Structural validation failed. Please fix the errors above."
+            exit 1
+          fi
+          echo "Structure and permissions are correct!"
+
+      # 2. Identify and Lint Shell Scripts
+      - name: Identify and Lint Bash/Shell
+        run: |
+          SHELL_FILES=$(grep -rIl '^#!.*\(bash\|sh\)' . --exclude-dir=.git --exclude=bootstrap.sh || true)
+          if [ -n "$SHELL_FILES" ]; then
+            echo "$SHELL_FILES" | xargs shellcheck
+          fi
+
+      # 3. Identify and Lint Python Scripts
+      - name: Identify and Lint Python
+        run: |
+          PYTHON_FILES=$(grep -rIl '^#!.*python' . --exclude-dir=.git || true)
+          if [ -n "$PYTHON_FILES" ]; then
+            echo "$PYTHON_FILES" | xargs -I {} python3 -m py_compile {}
+          fi
+
+      # 4. Test Bootstrap
+      - name: Test Bootstrap
+        run: |
+          chmod +x bootstrap.sh
+          ./bootstrap.sh --list
+
+      # 5. Update the readme with the new catalog
+      - name: Update Toolbox Index
+        run: |
+          echo "Generating CATALOG.md"
+          ./ci-helpers/build_catalog.sh > ci-helpers/CATALOG.md
+          echo "Generating a new README.md"
+          cat ./ci-helpers/README.md ./ci-helpers/CATALOG.md > ./README.md
